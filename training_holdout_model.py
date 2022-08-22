@@ -1,14 +1,9 @@
 import argparse
 import os
 
-import math
-
-import random
-
 from itertools import groupby
-
+import random
 from PIL import Image
-from requests import get
 
 from tqdm import tqdm
 
@@ -22,10 +17,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 import torch.nn.functional as F
 
-from backbones import get_model
-
 from utils_fn import enumerate_images
-
 
 def seed_everything(seed):
     random.seed(seed)
@@ -40,14 +32,11 @@ def seed_everything(seed):
 seed_everything(100)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 class FaceDataset(Dataset):
     def __init__(self, images_dir: str, subset: str="train") -> None:
         super().__init__()
         self.images_list = enumerate_images(images_dir=images_dir)
-        self.class_list = list(set(list(map(lambda x: os.path.normpath(x).split(os.sep)[-2], self.images_list))))
-        self.class_list.sort()
-        self.class_to_label = dict(zip(self.class_list, range(len(self.class_list))))
-        #print(self.class_to_label)
         self.transfrom = transforms.Compose([transforms.Resize([112, 112]), transforms.ToTensor()])
     
     def __len__(self):
@@ -55,7 +44,7 @@ class FaceDataset(Dataset):
 
     def __getitem__(self, index):
         image = self.images_list[index]
-        label = int(self.class_to_label[os.path.normpath(image).split(os.sep)[-2]])
+        label = int(os.path.normpath(image).split(os.sep)[-2])
 
         #img = torchvision.io.read_image(image)
         img = Image.open(image).convert("RGB")
@@ -66,33 +55,59 @@ class FaceDataset(Dataset):
         return img, label
 
 
-class FaceModel(nn.Module):
+class GlobalGeMPool2d(nn.Module):
+    """Generalized mean pooling.
 
-    def __init__(self, model_name: str="r18", num_classes: int=10177):
+    Inputs should be non-negative.
+    """
+
+    def __init__(
+        self,
+        pooling_param: float,
+    ):
+        """
+        Args:
+            pooling_param: the GeM pooling parameter
+        """
         super().__init__()
-        self.backbone = get_model(name=model_name)
+        self.pooling_param = pooling_param
 
-        for layer in self.backbone.parameters():
-            layer.requires_grad = False
-        
+    def forward(self, x):
+        N, C, H, W = x.size()
+        x = x.reshape(N, C, H * W)  # Combine spatial dimensions
+        mean = x.clamp(min=1e-6).pow(self.pooling_param).mean(dim=2)
+        r = 1.0 / self.pooling_param
+        return mean.pow(r)
 
-        #in_features = self.backbone.features.out_features
-        self.fc = nn.Linear(in_features=512, out_features=num_classes, bias=True)
 
-    def forward(self, images):
-        x = self.backbone(images)
-        output = self.fc(x)
+class L2Norm(nn.Module):
+    def forward(self, x):
+        return F.normalize(x)
 
-        return output
 
+'''class FaceModel(nn.Module):
+
+    def __init__(self):
+        self.backbone = torchvision.models.resnet18()'''
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 def get_args():
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--train_dir", type=str, default=r"D:\Face_Datasets\choose_train")
-    parser.add_argument("--val_dir", type=str, default=r"D:\Face_Datasets\choose_train")
+    parser.add_argument("--train_dir", type=str, default=r"D:\Face_Datasets\img_aligned_celeba_train_val_1\train")
+    parser.add_argument("--val_dir", type=str, default=r"D:\Face_Datasets\img_aligned_celeba_train_val_1\val")
     parser.add_argument("--model_dir", type=str, default=r"D:\Face_Datasets\CelebA_Models")
     parser.add_argument("--checkpoint_pattern", type=str, default=r"checkpoint")
     parser.add_argument("--pretrained", type=str, default=None)
@@ -121,7 +136,7 @@ def train_epoch(dataloader: DataLoader, model: nn.Module, loss_fn, optimizer: op
 
         optimizer.step()
 
-        if batch % 10 == 0:
+        if batch % 100 == 0:
             loss, current = loss.item(), batch * len(images)
             print("Loss: {}, [{}/{}]".format(loss, current, size))
 
@@ -155,7 +170,6 @@ def save_model(model: nn.Module, accuracy: float, loss: float, epoch: int, save_
                 "epoch": epoch}, save_path)
     print("Save model with accuracy: {}, loss {} at epoch: {}".format(accuracy, loss, epoch))
 
-
 if __name__ == "__main__":
 
     args = get_args()
@@ -178,16 +192,32 @@ if __name__ == "__main__":
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=False)
 
-    model = FaceModel(model_name="r18", num_classes=len(train_dataset.class_list))
-
+    #for images, labels in train_dataloader:
+    #    print(torch.min(images), torch.max(images), labels)
+    
+    model = torchvision.models.resnet18(num_classes=10177)
+    #model = torchvision.models.resnet18(pretrained=True, progress=True)
+    #model.fc = nn.Linear(512, out_features=10177)
+    #new_model = nn.Sequential(*(list(model.children())[:-1]))
     if pretrained:
         model.load_state_dict(torch.load(pretrained, map_location=torch.device("cpu"))["weights"])
     model.to(device=device)
     print("Model: {}".format(model))
 
+    #print("New model: {}".format(new_model))
 
+    '''new_model.to(device=device)
+    new_model.eval()
+
+    for images, labels in tqdm(train_dataloader):
+        images = images.to(device)
+        with torch.no_grad():
+            feature = new_model(images)
+        
+        print(feature.cpu().numpy().shape)'''
     loss_fn = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    lr_schedule = optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode="max", factor=0.5, patience=10, verbose=True)
 
     max_accuracy = -np.inf
     save_path = os.path.join(model_dir, checkpoint_pattern + ".pth")
@@ -195,8 +225,8 @@ if __name__ == "__main__":
         print("Epoch {}\n-------------------------------------------------".format(t + 1))
         train_epoch(dataloader=train_dataloader, model=model, loss_fn=loss_fn, optimizer=optimizer)
         val_acc, val_loss = val_loop(dataloader=val_dataloader, model=model, loss_fn=loss_fn)
+        lr_schedule.step(val_acc)
         if val_acc > max_accuracy:
             max_accuracy = val_acc
             save_model(model=model, accuracy=val_acc, loss=val_loss, epoch=t+1, save_path=save_path)
     print("Done")
-    
