@@ -47,6 +47,7 @@ class FaceDataset(Dataset):
         self.class_list = list(set(list(map(lambda x: os.path.normpath(x).split(os.sep)[-2], self.images_list))))
         self.class_list.sort()
         self.class_to_label = dict(zip(self.class_list, range(len(self.class_list))))
+        print(self.class_to_label)
         #print(self.class_to_label)
         self.transfrom = transforms.Compose([transforms.Resize([112, 112]), transforms.ToTensor()])
     
@@ -178,7 +179,7 @@ if __name__ == "__main__":
     train_dataloader = DataLoader(dataset=train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     val_dataloader = DataLoader(dataset=val_dataset, batch_size=batch_size, shuffle=False)
 
-    model = FaceModel(model_name="r18", num_classes=len(train_dataset.class_list))
+    model = FaceModel(model_name="r50", num_classes=len(train_dataset.class_list))
 
     if pretrained:
         model.load_state_dict(torch.load(pretrained, map_location=torch.device("cpu"))["weights"])
@@ -187,7 +188,7 @@ if __name__ == "__main__":
 
 
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=learning_rate)
 
     max_accuracy = -np.inf
     save_path = os.path.join(model_dir, checkpoint_pattern + ".pth")
