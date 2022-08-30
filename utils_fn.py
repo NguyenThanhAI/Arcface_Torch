@@ -1,8 +1,12 @@
 import os
+from PIL import Image
 
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
+
+import torch
+from torchvision import transforms
 
 
 def enumerate_images(images_dir: str) -> List[str]:
@@ -26,3 +30,36 @@ def compare_faces(features_1: np.ndarray, feature_2: np.ndarray, threshold: floa
     return (similarity > threshold)'''
     similarity = np.sqrt(np.sum((features_1 - feature_2[np.newaxis, :])**2, axis=1))
     return (similarity < threshold)
+
+
+def load_images_and_labels_into_tensors(images_dir: str) -> Tuple[torch.Tensor, torch.Tensor]:
+    images_list = enumerate_images(images_dir=images_dir)
+
+    transform = transforms.Compose([transforms.Resize([112, 112]), transforms.ToTensor()])
+
+    class_list = list(set(list(map(lambda x: os.path.normpath(x).split(os.sep)[-2], images_list))))
+    class_list.sort()
+
+    class_to_label = dict(zip(class_list, range(len(class_list))))
+
+    images = []
+    labels = []
+
+    for image in images_list:
+        label = int(class_to_label[os.path.normpath(image).split(os.sep)[-2]])
+        labels.append(label)
+
+        img = Image.open(image).convert("RGB")
+
+        img = transform(img)
+
+        images.append(img)
+
+    images = torch.stack(images, dim=0)
+    labels = torch.from_numpy(np.asarray(labels))
+
+    return images, labels
+
+
+'''images, labels = load_images_and_labels_into_tensors(images_dir=r"D:\Face_Datasets\choose_train")
+print(images.min(), images.max(), images.shape, labels.shape)'''
