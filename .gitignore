@@ -24,6 +24,7 @@ checkpoint
 *.gif
 *.txt
 *.ipynb
+*.db
 
 # Editors
 .vscode/
