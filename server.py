@@ -124,7 +124,7 @@ def register_face(info: str, files: List[bytes]=File(...)):
 
 
 @app.post("/verify/{person_id}")
-def verify_face(person_id: int, , threshold: float, image: bytes=File(...)):
+def verify_face(person_id: int, threshold: float, image: bytes=File(...)):
     feature = extract_feature(file=image)
     if feature is None:
         return {"No face"}
