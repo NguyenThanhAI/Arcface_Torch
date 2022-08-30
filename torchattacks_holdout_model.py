@@ -8,6 +8,7 @@ import numpy as np
 import cv2
 
 import torch
+import torch.optim as optim
 import torchvision
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 import torch.nn as nn
@@ -16,9 +17,14 @@ import torch.nn as nn
 import torchattacks
 
 from torchattacks.attack import Attack
-from torchattacks import VANILA, GN, FGSM, BIM, CW, RFGSM, PGD, PGDL2, EOTPGD, TPGD, FFGSM, \
+from torchattacks import MultiAttack, VANILA, GN, FGSM, BIM, CW, RFGSM, PGD, PGDL2, EOTPGD, TPGD, FFGSM, \
     MIFGSM, APGD, APGDT, FAB, Square, AutoAttack, OnePixel, DeepFool, SparseFool, DIFGSM, UPGD, TIFGSM, Jitter, \
     Pixle
+
+import foolbox as fb
+
+import art.attacks.evasion as evasion
+from art.estimators.classification import PyTorchClassifier
 
 from backbones import get_model
 from utils_fn import enumerate_images
@@ -63,6 +69,52 @@ def get_args():
 
         return img, label'''
 
+
+
+class L2BrendelBethge(Attack):
+    def __init__(self, model):
+        super(L2BrendelBethge, self).__init__("L2BrendelBethge", model)
+        self.fmodel = fb.PyTorchModel(self.model, bounds=(0,1), device=self.device)
+        self.init_attack = fb.attacks.DatasetAttack()
+        self.adversary = fb.attacks.L2BrendelBethgeAttack(init_attack=self.init_attack)
+        self._attack_mode = 'only_default'
+        
+    def forward(self, images, labels):
+        images, labels = images.to(self.device), labels.to(self.device)
+        
+        # DatasetAttack
+        batch_size = len(images)
+        batches = [(images[:batch_size//2], labels[:batch_size//2]),
+                   (images[batch_size//2:], labels[batch_size//2:])]
+        self.init_attack.feed(model=self.fmodel, inputs=batches[0][0]) # feed 1st batch of inputs
+        self.init_attack.feed(model=self.fmodel, inputs=batches[1][0]) # feed 2nd batch of inputs
+        criterion = fb.Misclassification(labels)
+        init_advs = self.init_attack.run(self.fmodel, images, criterion)
+        
+        # L2BrendelBethge
+        adv_images = self.adversary.run(self.fmodel, images, labels, starting_points=init_advs)
+        return adv_images
+
+
+class JSMA(Attack):
+    def __init__(self, model, theta=1/255, gamma=0.15, batch_size=128):
+        super(JSMA, self).__init__("JSMA", model)
+        self.classifier = PyTorchClassifier(
+                            model=self.model, clip_values=(0, 1),
+                            loss=nn.CrossEntropyLoss(),
+                            optimizer=optim.Adam(self.model.parameters(), lr=0.01),
+                            input_shape=(1, 28, 28), nb_classes=10)
+        self.adversary = evasion.SaliencyMapMethod(classifier=self.classifier,
+                                                   theta=theta, gamma=gamma,
+                                                   batch_size=batch_size)
+        self.target_map_function = lambda labels: (labels+1)%10
+        self._attack_mode = 'only_default'
+        
+    def forward(self, images, labels):
+        adv_images = self.adversary.generate(images, self.target_map_function(labels))
+        return torch.tensor(adv_images).to(self.device)
+
+
 class FaceDataset(Dataset):
     def __init__(self, images_dir: str) -> None:
         super().__init__()
@@ -70,6 +122,7 @@ class FaceDataset(Dataset):
         identities = list(set(list(map(lambda x: os.path.normpath(x).split(os.sep)[-2], self.images_list))))
         identities.sort()
         identities_to_id = dict(zip(identities, list(range(len(identities)))))
+        print(identities_to_id)
         self.images_to_groundtruth_id = dict(zip(self.images_list, list(map(lambda x: identities_to_id[os.path.normpath(x).split(os.sep)[-2]], self.images_list))))
     
     def __len__(self):
@@ -98,8 +151,8 @@ class FaceModel(nn.Module):
         super().__init__()
         self.backbone = get_model(name=model_name)
 
-        for layer in self.backbone.parameters():
-            layer.requires_grad = False
+        #for layer in self.backbone.parameters():
+        #    layer.requires_grad = False
         
 
         #in_features = self.backbone.features.out_features
@@ -135,25 +188,32 @@ if __name__ == "__main__":
     image_ord_to_image_name = dict(zip(range(len(images_list)), images_list))
 
     #model = torchvision.models.resnet18(num_classes=10177)
-    model = FaceModel(model_name="r18", num_classes=len(identities))
+    model = FaceModel(model_name="r50", num_classes=len(identities))
     model.load_state_dict(torch.load(weights, map_location=torch.device("cpu"))["weights"])
 
     model.eval()
     model.to(device=device)
 
     attack_types: List[Attack] = [
-    RFGSM(model, eps=8/255, alpha=2/255, steps=100)
+    #FGSM(model, eps=32/255),
+    #PGD(model, eps=0.6, steps=50, random_start=True),
+    #CW(model, kappa=0.5),
+    #L2BrendelBethge(model),
+    AutoAttack(model, n_classes=len(identities)),
+    #JSMA(model, theta=8/255, gamma=0.3),
+    #PGDL2(model, eps=2, alpha=0.4),
+    #EOTPGD(model, eps=0.4, alpha=8/255)
     ]
 
     dataset = FaceDataset(images_dir=images_dir)
 
     dataloader = DataLoader(dataset=dataset, batch_size=32, shuffle=False)
 
-    for images, labels in dataloader:
-        print(images.min(), images.max())
+    #for images, labels in dataloader:
+    #    print(images.min(), images.max())
 
     for atk in tqdm(attack_types):
-
+        #atk.set_mode_targeted_least_likely(5)
         atk.set_return_type("int")
 
         atk_name = atk.__class__.__name__

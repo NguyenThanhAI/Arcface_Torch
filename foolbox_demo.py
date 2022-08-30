@@ -23,6 +23,7 @@ fmodel = fmodel.transform_bounds((0, 1))
 assert fmodel.bounds == (0, 1)
 
 images, labels = fb.utils.samples(fmodel, dataset='imagenet', batchsize=16)
+print(images.shape, labels.shape)
 accuracy = fb.utils.accuracy(fmodel, images, labels)
 print(accuracy)
 
