@@ -1,5 +1,6 @@
 import os
 from PIL import Image
+from io import BytesIO
 
 from typing import List, Tuple
 
@@ -59,6 +60,14 @@ def load_images_and_labels_into_tensors(images_dir: str) -> Tuple[torch.Tensor, 
     labels = torch.from_numpy(np.asarray(labels))
 
     return images, labels
+
+
+def read_image(image_encoded: bytes, mode="RGB") -> np.ndarray:
+    pil_image = Image.open(BytesIO(image_encoded))
+    pil_image.convert(mode)
+    img = np.array(pil_image)
+
+    return img
 
 
 '''images, labels = load_images_and_labels_into_tensors(images_dir=r"D:\Face_Datasets\choose_train")
