@@ -86,6 +86,9 @@ class FaceRecognitionDataBase(object):
         self.conn.commit()
         cursor.close()
 
+    def close(self):
+        self.conn.close()
+
     
 #database = FaceRecognitionDataBase("info.db")
 
